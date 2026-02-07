@@ -5,7 +5,7 @@ Play script for AlphaZero Hexapawn
 import argparse
 from hexapawn_core import (
     HexapawnState, AlphaZeroAgent, find_latest_model,
-    X, O, BLANK
+    X, O
 )
 
 
@@ -40,10 +40,7 @@ def play_game(agent, human_player=X, n=3):
         print()
 
     winner = state.get_winner()
-    if winner == BLANK:
-        print("It's a draw!")
-    else:
-        print(f"Player {'X' if winner == X else 'O'} wins!")
+    print(f"Player {'X' if winner == X else 'O'} wins!")
 
 
 if __name__ == "__main__":

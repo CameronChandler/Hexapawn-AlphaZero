@@ -14,17 +14,16 @@ from datetime import datetime
 
 from hexapawn_core import (
     HexapawnState, HexapawnNet, AlphaZeroAgent,
-    save_model, find_latest_model, X, O, BLANK
+    save_model, find_latest_model, X, O
 )
 
 
 def evaluate_agent(agent, num_games=50, n=3):
     """
     Evaluate agent by playing against a random player
-    Returns win rate, draw rate, loss rate
+    Returns win rate, loss rate
     """
     wins = 0
-    draws = 0
     losses = 0
     
     for _ in range(num_games):
@@ -44,22 +43,19 @@ def evaluate_agent(agent, num_games=50, n=3):
         winner = state.get_winner()
         if winner == O:
             wins += 1
-        elif winner == BLANK:
-            draws += 1
         else:
             losses += 1
     
-    return wins / num_games, draws / num_games, losses / num_games
+    return wins / num_games, losses / num_games
 
 
 def agent_vs_agent(agent1, agent2, num_games=50, n=3):
     """
     Play two agents against each other
-    Returns: (agent1_wins, agent2_wins, draws)
+    Returns: (agent1_wins, agent2_wins)
     """
     agent1_wins = 0
     agent2_wins = 0
-    draws = 0
     
     for _ in range(num_games):
         state = HexapawnState(n)
@@ -76,10 +72,8 @@ def agent_vs_agent(agent1, agent2, num_games=50, n=3):
             agent1_wins += 1
         elif winner == X:
             agent2_wins += 1
-        else:
-            draws += 1
     
-    return agent1_wins, agent2_wins, draws
+    return agent1_wins, agent2_wins
 
 
 def save_training_stats(stats, n):
@@ -99,12 +93,12 @@ def load_training_stats(n):
     
     if os.path.exists(filepath):
         with open(filepath, 'r') as f:
-            return json.load(f)
+            stats = json.load(f)
+        return stats
     
     return {
         'iterations': [],
         'win_rates': [],
-        'draw_rates': [],
         'loss_rates': [],
         'avg_losses': [],
         'policy_losses': [],
@@ -221,7 +215,6 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
     stats = load_training_stats(n) if resume else {
         'iterations': [],
         'win_rates': [],
-        'draw_rates': [],
         'loss_rates': [],
         'avg_losses': [],
         'policy_losses': [],
@@ -282,20 +275,19 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         
         # Evaluation against random player
         print("\nEvaluating against random player...")
-        win_rate, draw_rate, loss_rate = evaluate_agent(agent, num_games=eval_games, n=n)
+        win_rate, loss_rate = evaluate_agent(agent, num_games=eval_games, n=n)
         
         print(f"Results vs Random:")
         print(f"  Win Rate:  {win_rate*100:.1f}%")
-        print(f"  Draw Rate: {draw_rate*100:.1f}%")
         print(f"  Loss Rate: {loss_rate*100:.1f}%")
         
         # Compare with baseline if available
         if baseline_agent is not None:
             print("\nComparing with baseline agent...")
-            new_wins, baseline_wins, draws = agent_vs_agent(
+            new_wins, baseline_wins = agent_vs_agent(
                 agent, baseline_agent, num_games=20, n=n
             )
-            print(f"New agent vs Baseline: {new_wins}-{baseline_wins}-{draws} (W-L-D)")
+            print(f"New agent vs Baseline: {new_wins}-{baseline_wins} (W-L)")
             
             # Update baseline if new agent is better
             if new_wins > baseline_wins:
@@ -307,7 +299,6 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         # Save statistics
         stats['iterations'].append(iteration)
         stats['win_rates'].append(win_rate)
-        stats['draw_rates'].append(draw_rate)
         stats['loss_rates'].append(loss_rate)
         stats['avg_losses'].append(avg_loss)
         stats['policy_losses'].append(policy_loss)

@@ -60,13 +60,14 @@ class HexapawnState:
         return False
 
     def get_winner(self):
+        if not self.is_terminal():
+            return None
         if O in self.board[0] or not np.any(self.board == X):
             return O
         if X in self.board[-1] or not np.any(self.board == O):
             return X
-        if not self.get_possible_moves():
-            return X if self.player == O else O
-        return BLANK
+        # No moves available: current player to move loses.
+        return X if self.player == O else O
 
     def copy(self):
         new_state = HexapawnState.__new__(HexapawnState)
@@ -241,10 +242,7 @@ class AlphaZeroAgent:
             # Evaluation
             if state.is_terminal():
                 winner = state.get_winner()
-                if winner == BLANK:
-                    value = -1
-                else:
-                    value = 1 if winner == state.player else -1
+                value = 1 if winner == state.player else -1
             else:
                 _, value_tensor = self.net(state.to_tensor())
                 value = value_tensor.item()

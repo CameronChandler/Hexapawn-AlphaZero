@@ -53,11 +53,14 @@ class HexapawnState:
         return False
 
     def get_winner(self):
+        if not self.is_terminal():
+            return None
         if O in self.board[0] or not np.any(self.board == X):
             return O
         if X in self.board[-1] or not np.any(self.board == O):
             return X
-        return BLANK
+        # No moves available: current player to move loses.
+        return X if self.player == O else O
 
     def copy(self):
         new_state = HexapawnState.__new__(HexapawnState)
@@ -155,8 +158,6 @@ class MCTSAgent:
                     mover = X if node.state.player == O else O
                     if winner == mover:
                         result = 1
-                    elif winner == BLANK:
-                        result = 0.5
                     else:
                         result = 0
                     node.update(result)
@@ -200,17 +201,13 @@ def play_game(agent, human_player=X, n=N, show_stats=False):
         print()
 
     winner = state.get_winner()
-    if winner == BLANK:
-        print("It's a draw!")
-    else:
-        print(f"Player {'X' if winner == X else 'O'} wins!")
+    print(f"Player {'X' if winner == X else 'O'} wins!")
 
 
 def agent_vs_agent(agent1, agent2, n=N, num_games=100):
     """Play multiple games between two agents"""
     agent1_wins = 0
     agent2_wins = 0
-    draws = 0
     
     for game_num in range(num_games):
         state = HexapawnState(n)
@@ -227,17 +224,14 @@ def agent_vs_agent(agent1, agent2, n=N, num_games=100):
             agent1_wins += 1
         elif winner == X:
             agent2_wins += 1
-        else:
-            draws += 1
         
         if (game_num + 1) % 10 == 0:
-            print(f"Games {game_num + 1}/{num_games}: Agent1(O)={agent1_wins}, Agent2(X)={agent2_wins}, Draws={draws}")
+            print(f"Games {game_num + 1}/{num_games}: Agent1(O)={agent1_wins}, Agent2(X)={agent2_wins}")
     
     print(f"\nFinal Results:")
     print(f"Agent 1 (O) wins: {agent1_wins}")
     print(f"Agent 2 (X) wins: {agent2_wins}")
-    print(f"Draws: {draws}")
-    return agent1_wins, agent2_wins, draws
+    return agent1_wins, agent2_wins
 
 
 if __name__ == "__main__":
