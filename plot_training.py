@@ -22,7 +22,6 @@ def plot_training_stats(n=3):
     
     iterations = stats['iterations']
     win_rates = [wr * 100 for wr in stats['win_rates']]
-    loss_rates = [lr * 100 for lr in stats['loss_rates']]
     avg_losses = stats['avg_losses']
     
     # Create figure with subplots
@@ -31,7 +30,6 @@ def plot_training_stats(n=3):
     
     # Plot 1: Performance vs Random Player
     ax1.plot(iterations, win_rates,  'g-o', label='Win Rate',  linewidth=2, markersize=6)
-    ax1.plot(iterations, loss_rates, 'r-^', label='Loss Rate', linewidth=2, markersize=6)
     ax1.set_xlabel('Iteration', fontsize=11)
     ax1.set_ylabel('Rate (%)', fontsize=11)
     ax1.set_title('Performance vs Random Player', fontsize=12)
@@ -80,8 +78,8 @@ def print_summary(n=3):
         print(f"Training started: {stats.get('timestamp', 'Unknown')}")
         
         print("\n--- Performance vs Random Player ---")
-        print(f"Initial: Win={stats['win_rates'][0]*100:.1f}% Loss={stats['loss_rates'][0]*100:.1f}%")
-        print(f"Final:   Win={stats['win_rates'][-1]*100:.1f}% Loss={stats['loss_rates'][-1]*100:.1f}%")
+        print(f"Initial: Win={stats['win_rates'][0]*100:.1f}%")
+        print(f"Final:   Win={stats['win_rates'][-1]*100:.1f}%")
         
         improvement = (stats['win_rates'][-1] - stats['win_rates'][0]) * 100
         print(f"\nWin rate improvement: {improvement:+.1f}%")

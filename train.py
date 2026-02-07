@@ -26,7 +26,6 @@ def evaluate_agent(agent, num_games=50, n=3):
     Returns win rate, loss rate
     """
     wins = 0
-    losses = 0
     
     for game_idx in range(num_games):
         agent_player = O if (game_idx % 2 == 0) else X
@@ -46,10 +45,8 @@ def evaluate_agent(agent, num_games=50, n=3):
         winner = state.get_winner()
         if winner == agent_player:
             wins += 1
-        else:
-            losses += 1
     
-    return wins / num_games, losses / num_games
+    return wins / num_games
 
 
 def agent_vs_agent(agent1, agent2, num_games=50, n=3):
@@ -102,7 +99,6 @@ def load_training_stats(n):
     return {
         'iterations': [],
         'win_rates': [],
-        'loss_rates': [],
         'avg_losses': [],
         'policy_losses': [],
         'value_losses': [],
@@ -246,7 +242,6 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
     stats = load_training_stats(n) if resume else {
         'iterations': [],
         'win_rates': [],
-        'loss_rates': [],
         'avg_losses': [],
         'policy_losses': [],
         'value_losses': [],
@@ -315,11 +310,10 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         
         # Evaluation against random player
         print("\nEvaluating against random player...")
-        win_rate, loss_rate = evaluate_agent(agent, num_games=eval_games, n=n)
+        win_rate = evaluate_agent(agent, num_games=eval_games, n=n)
         
         print(f"Results vs Random:")
         print(f"  Win Rate:  {win_rate*100:.1f}%")
-        print(f"  Loss Rate: {loss_rate*100:.1f}%")
 
         if debug:
             print("\nMCTS diagnostics (start state):")
@@ -364,7 +358,6 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         # Save statistics
         stats['iterations'].append(iteration)
         stats['win_rates'].append(win_rate)
-        stats['loss_rates'].append(loss_rate)
         stats['avg_losses'].append(avg_loss)
         stats['policy_losses'].append(policy_loss)
         stats['value_losses'].append(value_loss)
