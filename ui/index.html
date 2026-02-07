@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hexapawn Arena</title>
+    <link rel="stylesheet" href="/ui/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand">
+          <div class="mark"></div>
+          <div class="title">
+            <h1>Hexapawn Arena</h1>
+            <p>Drag pawns to play an n×n match against the agent.</p>
+          </div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Status</div>
+          <div id="status" class="status-value">Loading…</div>
+          <div id="substatus" class="status-sub">Waiting for board.</div>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="controls">
+          <label class="field">
+            <span>Board Size</span>
+            <select id="boardSize">
+              <option value="3">3×3</option>
+              <option value="4">4×4</option>
+              <option value="5" selected>5×5</option>
+              <option value="6">6×6</option>
+              <option value="7">7×7</option>
+              <option value="8">8×8</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Play As</span>
+            <select id="playAs">
+              <option value="1" selected>X (top)</option>
+              <option value="-1">O (bottom)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Simulations</span>
+            <input id="simulations" type="number" min="20" max="500" step="10" value="120" />
+          </label>
+          <button id="newGame" class="btn primary">New Game</button>
+          <button id="trainAgent" class="btn ghost hidden">Train Agent</button>
+        </div>
+
+        <div class="board-wrap">
+          <div id="board" class="board"></div>
+          <div class="legend">
+            <div class="chip x">X</div>
+            <span>You</span>
+            <div class="chip o">O</div>
+            <span>Agent</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="notes">
+        <div class="note">
+          Drag your pawns forward one square. Capture diagonally.
+        </div>
+        <div class="note">
+          Win by reaching the far rank or leaving your opponent with no moves.
+        </div>
+      </section>
+    </div>
+
+    <script src="/ui/app.js"></script>
+  </body>
+</html>
