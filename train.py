@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 from datetime import datetime
+import math
 
 from hexapawn_core import (
     HexapawnState, HexapawnNet, AlphaZeroAgent,
@@ -21,27 +22,29 @@ from hexapawn_core import (
 def evaluate_agent(agent, num_games=50, n=3):
     """
     Evaluate agent by playing against a random player
+    Agent plays both sides vs random.
     Returns win rate, loss rate
     """
     wins = 0
     losses = 0
     
-    for _ in range(num_games):
+    for game_idx in range(num_games):
+        agent_player = O if (game_idx % 2 == 0) else X
         state = HexapawnState(n)
         
         while not state.is_terminal():
-            if state.player == O:
-                # Agent plays as O
+            if state.player == agent_player:
+                # Agent move
                 move = agent.choose_move(state, temperature=0)
             else:
-                # Random opponent plays as X
+                # Random opponent move
                 moves = state.get_possible_moves()
                 move = random.choice(moves)
             
             state.make_move(move)
         
         winner = state.get_winner()
-        if winner == O:
+        if winner == agent_player:
             wins += 1
         else:
             losses += 1
@@ -107,33 +110,33 @@ def load_training_stats(n):
     }
 
 
-def self_play_game(agent, temperature=1.0, n=3):
+def self_play_game(agent, temperature=1.0, n=3, debug_value=False):
     """Play one game of self-play and collect training data"""
     state = HexapawnState(n)
     examples = []
     
     while not state.is_terminal():
-        # Get policy from MCTS
         policy_target = agent.get_policy_target(state, temperature)
-        
-        # Store training example
         examples.append((state.copy(), policy_target, None))
-        
-        # Choose move
         move = agent.choose_move(state, temperature)
+        # state.display_board()
         state.make_move(move)
     
     # Fill in game outcome for all examples
     winner = state.get_winner()
     training_examples = []
+    start_value = None
     for i, (s, policy, _) in enumerate(examples):
-        # Value from perspective of player who made the move
-        if winner == s.player:
-            value = 1
-        else:
-            value = -1
+        # Value from perspective of player at this state.
+        value = 1 if winner == s.player else -1
+        if value not in (-1, 1):
+            print("Warning: non-binary value target produced.")
+        if i == 0:
+            start_value = value
         training_examples.append((s, policy, value))
     
+    if debug_value:
+        return training_examples, start_value, winner
     return training_examples
 
 
@@ -143,6 +146,30 @@ def train_network(net, examples, epochs=10, batch_size=32, n=3):
     total_avg_loss = 0
     total_policy_loss = 0
     total_value_loss = 0
+
+    # Target diagnostics
+    value_targets_all = [v for _, _, v in examples]
+    if value_targets_all:
+        pos = sum(1 for v in value_targets_all if v > 0)
+        neg = sum(1 for v in value_targets_all if v < 0)
+        print(f"Target value distribution: +1={pos}, -1={neg}")
+    policy_nonzero = []
+    policy_entropy = []
+    for _, policy, _ in examples:
+        if not policy:
+            continue
+        probs = list(policy.values())
+        total = sum(probs)
+        if total > 0:
+            probs = [p / total for p in probs]
+        nz = sum(1 for p in probs if p > 0)
+        policy_nonzero.append(nz)
+        entropy = -sum(p * math.log(p + 1e-12) for p in probs)
+        policy_entropy.append(entropy)
+    if policy_nonzero:
+        avg_nz = sum(policy_nonzero) / len(policy_nonzero)
+        avg_ent = sum(policy_entropy) / len(policy_entropy)
+        print(f"Target policy: avg_nonzero={avg_nz:.1f}, avg_entropy={avg_ent:.3f}")
     
     for epoch in range(epochs):
         random.shuffle(examples)
@@ -167,7 +194,11 @@ def train_network(net, examples, epochs=10, batch_size=32, n=3):
                     if dc < -1 or dc > 1:
                         continue
                     idx = (r * n + c) * 3 + (dc + 1)
-                    policy_tensor[idx] = prob
+                    policy_tensor[idx] = float(prob)
+                if torch.isnan(policy_tensor).any():
+                    print("Warning: NaN in policy target tensor.")
+                if policy_tensor.sum().item() == 0:
+                    print("Warning: empty policy target tensor (sum=0).")
                 policy_targets.append(policy_tensor)
                 value_targets.append(value)
             
@@ -204,7 +235,7 @@ def train_network(net, examples, epochs=10, batch_size=32, n=3):
 
 
 def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3, 
-                    resume=True, eval_games=50):
+                    resume=True, eval_games=50, debug=False):
     '''
     If resume=True, load the latest saved model weights and continue training
     from the recorded iteration number. Optimizer state and replay buffer
@@ -265,8 +296,17 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         
         # Self-play
         print("Generating self-play games...")
+        start_values = []
+        self_play_wins = {X: 0, O: 0}
         for game in trange(games_per_iteration):
-            examples = self_play_game(agent, temperature=1.0, n=n)
+            if debug:
+                examples, start_value, winner = self_play_game(agent, temperature=1.0, n=n, debug_value=True)
+                if start_value is not None:
+                    start_values.append(start_value)
+                if winner in self_play_wins:
+                    self_play_wins[winner] += 1
+            else:
+                examples = self_play_game(agent, temperature=1.0, n=n)
             replay_buffer.extend(examples)
         
         # Train network
@@ -280,6 +320,31 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         print(f"Results vs Random:")
         print(f"  Win Rate:  {win_rate*100:.1f}%")
         print(f"  Loss Rate: {loss_rate*100:.1f}%")
+
+        if debug:
+            print("\nMCTS diagnostics (start state):")
+            start_state = HexapawnState(n)
+            root = agent.search(start_state)
+            visits = [c.visits for c in root.children]
+            if visits:
+                total_visits = sum(visits)
+                probs = [v / total_visits for v in visits]
+                entropy = -sum(p * math.log(p + 1e-12) for p in probs)
+                print(f"  Root children: {len(visits)}")
+                print(f"  Visit entropy: {entropy:.3f}")
+                print(f"  Visit range: min={min(visits)}, max={max(visits)}")
+            else:
+                print("  Warning: no root children found (no legal moves?)")
+
+            with torch.no_grad():
+                _, value_tensor = agent.net(start_state.to_tensor())
+            print(f"  Net value(start): {value_tensor.item():+.3f}")
+            if start_values:
+                avg_start_value = sum(start_values) / len(start_values)
+                print(f"  Self-play start value avg: {avg_start_value:+.3f}")
+            total_self_play = self_play_wins[X] + self_play_wins[O]
+            if total_self_play > 0:
+                print(f"  Self-play winners: O={self_play_wins[O]}, X={self_play_wins[X]}")
         
         # Compare with baseline if available
         if baseline_agent is not None:
@@ -334,10 +399,10 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train AlphaZero Hexapawn')
-    parser.add_argument('--n', type=int, default=5,
-                        help='Board size (default: 5)')
-    parser.add_argument('--iterations', type=int, default=200,
-                        help='Training iterations (default: 200)')
+    parser.add_argument('--n', type=int, default=4,
+                        help='Board size (default: 4)')
+    parser.add_argument('--iterations', type=int, default=10,
+                        help='Training iterations (default: 10)')
     parser.add_argument('--games', type=int, default=50,
                         help='Games per iteration (default: 50)')
     parser.add_argument('--simulations', type=int, default=50,
@@ -346,6 +411,8 @@ if __name__ == "__main__":
                         help='Number of evaluation games (default: 50)')
     parser.add_argument('--resume', action='store_true',
                         help='Resume training from last checkpoint')
+    parser.add_argument('--debug', action='store_true',
+                        help='Print MCTS diagnostics each iteration')
     
     args = parser.parse_args()
     
@@ -355,5 +422,6 @@ if __name__ == "__main__":
         simulations=args.simulations,
         n=args.n,
         resume=args.resume,
-        eval_games=args.eval_games
+        eval_games=args.eval_games,
+        debug=args.debug
     )

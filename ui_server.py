@@ -19,7 +19,7 @@ import hexapawn_core as core
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UI_DIR = os.path.join(BASE_DIR, "ui")
 
-# Ensure weight lookups resolve to 2026/weights even if server is launched elsewhere.
+# Ensure weight lookups resolve correctly even if server is launched elsewhere.
 core.WEIGHTS_DIR = os.path.join(BASE_DIR, "weights")
 
 app = Flask(__name__, static_folder=UI_DIR, static_url_path="/ui")

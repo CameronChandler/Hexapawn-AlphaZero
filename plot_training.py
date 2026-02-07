@@ -102,8 +102,8 @@ if __name__ == "__main__":
     import numpy as np  # Import here for trend line
     
     parser = argparse.ArgumentParser(description='Plot AlphaZero training statistics')
-    parser.add_argument('--n', type=int, default=5,
-                        help='Board size (default: 5)')
+    parser.add_argument('--n', type=int, default=3,
+                        help='Board size (default: 3)')
     parser.add_argument('--summary-only', action='store_true',
                         help='Print summary without plotting')
     

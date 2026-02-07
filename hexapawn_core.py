@@ -4,7 +4,6 @@ Shared between training and playing
 """
 
 import numpy as np
-import random
 import math
 import torch
 import torch.nn as nn
@@ -182,18 +181,28 @@ class MCTSNode:
 
 
 class AlphaZeroAgent:
-    def __init__(self, net, simulations=100, c_puct=1.0):
+    def __init__(self, net, simulations=100, c_puct=1.0, dirichlet_alpha=0.3, dirichlet_epsilon=0.25):
         self.net = net
         self.simulations = simulations
         self.c_puct = c_puct
+        self.dirichlet_alpha = dirichlet_alpha
+        self.dirichlet_epsilon = dirichlet_epsilon
         
     def get_move_priors(self, state):
         """Get policy (move probabilities) from neural network"""
         with torch.no_grad():
             policy_logits, _ = self.net(state.to_tensor())
-        
+        return self._policy_logits_to_priors(state, policy_logits)
+
+    def _policy_logits_to_priors(self, state, policy_logits):
         policy = torch.softmax(policy_logits, dim=1).squeeze().numpy()
-        
+        if not np.isfinite(policy).all():
+            print("Warning: non-finite policy logits detected; falling back to uniform priors.")
+            moves = state.get_possible_moves()
+            if not moves:
+                return {}
+            return {m: 1.0 / len(moves) for m in moves}
+
         moves = state.get_possible_moves()
         move_probs = {}
         for move in moves:
@@ -203,16 +212,28 @@ class AlphaZeroAgent:
                 continue
             idx = (r * state.n + c) * 3 + (dc + 1)
             move_probs[move] = policy[idx]
-        
+
         total = sum(move_probs.values())
         if total > 0:
             move_probs = {m: p / total for m, p in move_probs.items()}
         else:
             move_probs = {m: 1.0 / len(moves) for m in moves}
-        
+
         return move_probs
     
-    def search(self, root_state):
+    def _add_dirichlet_noise(self, move_priors):
+        if not move_priors:
+            return move_priors
+        moves = list(move_priors.keys())
+        alpha = self.dirichlet_alpha
+        epsilon = self.dirichlet_epsilon
+        noise = np.random.dirichlet([alpha] * len(moves))
+        return {
+            move: (1 - epsilon) * move_priors[move] + epsilon * noise[i]
+            for i, move in enumerate(moves)
+        }
+
+    def search(self, root_state, add_root_noise=False):
         """Run MCTS guided by neural network"""
         root = MCTSNode(root_state.copy())
         
@@ -222,41 +243,64 @@ class AlphaZeroAgent:
             search_path = [node]
             
             # Selection
-            while node.is_fully_expanded() and not node.is_terminal() and node.visits > 0:
+            while node.children and not node.is_terminal():
                 node = node.best_child(self.c_puct)
                 state.make_move(node.move)
                 search_path.append(node)
             
-            # Expansion
-            if not node.is_terminal():
-                move_priors = self.get_move_priors(state)
-                for move in node.untried_moves[:]:
-                    prior = move_priors.get(move, 1.0 / len(node.untried_moves))
-                    node.expand(move, prior)
-                
-                if node.children:
+            # Expansion + Evaluation
+            if state.is_terminal():
+                winner = state.get_winner()
+                # Value from current player to move at this state.
+                value = 1 if winner == state.player else -1
+            else:
+                with torch.no_grad():
+                    policy_logits, _ = self.net(state.to_tensor())
+
+                move_priors = self._policy_logits_to_priors(state, policy_logits)
+                if node is root and add_root_noise:
+                    move_priors = self._add_dirichlet_noise(move_priors)
+
+                if node is root and node.untried_moves:
+                    # Fully expand root once so policy targets are not degenerate.
+                    for move in node.untried_moves[:]:
+                        prior = move_priors.get(move, 1.0 / len(node.untried_moves))
+                        node.expand(move, prior)
                     node = node.best_child(self.c_puct)
                     state.make_move(node.move)
                     search_path.append(node)
+                elif node.untried_moves:
+                    untried = node.untried_moves[:]
+                    priors = np.array([move_priors.get(m, 0.0) for m in untried], dtype=np.float32)
+                    if priors.sum() <= 0:
+                        priors = np.ones(len(untried), dtype=np.float32)
+                    priors = priors / priors.sum()
+                    move = untried[np.random.choice(len(untried), p=priors)]
+                    node = node.expand(move, move_priors.get(move, 1.0 / len(untried)))
+                    state.make_move(node.move)
+                    search_path.append(node)
+
+                if state.is_terminal():
+                    winner = state.get_winner()
+                    value = 1 if winner == state.player else -1
+                else:
+                    with torch.no_grad():
+                        _, value_tensor = self.net(state.to_tensor())
+                    value = value_tensor.item()
             
-            # Evaluation
-            if state.is_terminal():
-                winner = state.get_winner()
-                value = 1 if winner == state.player else -1
-            else:
-                _, value_tensor = self.net(state.to_tensor())
-                value = value_tensor.item()
-            
-            # Backpropagation
+            # Backpropagation (value is from leaf player's perspective)
+            leaf_player = state.player
             for node in reversed(search_path):
-                node.update(value)
-                value = -value
+                if node.state.player == leaf_player:
+                    node.update(value)
+                else:
+                    node.update(-value)
         
         return root
     
     def choose_move(self, state, temperature=0):
         """Choose move based on MCTS visit counts"""
-        root = self.search(state)
+        root = self.search(state, add_root_noise=False)
         
         if temperature == 0:
             return max(root.children, key=lambda c: c.visits).move
@@ -270,19 +314,25 @@ class AlphaZeroAgent:
     
     def get_policy_target(self, state, temperature=1.0):
         """Get policy target for training (visit count distribution)"""
-        root = self.search(state)
-        visits = {c.move: c.visits for c in root.children}
-        total = sum(visits.values())
-        
+        root = self.search(state, add_root_noise=True)
+        if not root.children:
+            return {}
+
+        visits = np.array([c.visits for c in root.children], dtype=np.float32)
+        moves = [c.move for c in root.children]
+
         if temperature == 0:
-            best_move = max(visits.items(), key=lambda x: x[1])[0]
-            return {best_move: 1.0}
+            probs = np.zeros_like(visits)
+            probs[np.argmax(visits)] = 1.0
         else:
-            policy = {}
-            for move, v in visits.items():
-                policy[move] = (v / total) ** (1.0 / temperature)
-            total = sum(policy.values())
-            return {m: p / total for m, p in policy.items()}
+            visits = visits ** (1.0 / temperature)
+            total = visits.sum()
+            if total <= 0:
+                probs = np.ones_like(visits) / len(visits)
+            else:
+                probs = visits / total
+
+        return dict(zip(moves, probs))
 
 
 def save_model(net, n, iteration=None):
