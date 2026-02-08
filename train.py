@@ -22,10 +22,12 @@ from hexapawn_core import (
 def evaluate_agent(agent, num_games=50, n=3):
     """
     Evaluate agent by playing against a random player
-    Agent plays both sides vs random.
-    Returns win rate, loss rate
+    Agent plays both sides vs random
     """
-    wins = 0
+    o_wins = 0
+    x_wins = 0
+    num_o_games = 0
+    num_x_games = 0
     
     for game_idx in range(num_games):
         agent_player = O if (game_idx % 2 == 0) else X
@@ -44,9 +46,16 @@ def evaluate_agent(agent, num_games=50, n=3):
         
         winner = state.get_winner()
         if winner == agent_player:
-            wins += 1
+            if agent_player == O:
+                o_wins += 1
+            else:
+                x_wins += 1
+        if agent_player == O:
+            num_o_games += 1
+        else:
+            num_x_games += 1
     
-    return wins / num_games
+    return o_wins / num_o_games, x_wins / num_x_games
 
 
 def agent_vs_agent(agent1, agent2, num_games=50, n=3):
@@ -98,7 +107,8 @@ def load_training_stats(n):
     
     return {
         'iterations': [],
-        'win_rates': [],
+        'o_win_rates': [],
+        'x_win_rates': [],
         'avg_losses': [],
         'policy_losses': [],
         'value_losses': [],
@@ -239,7 +249,8 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
     # Load or create training statistics
     stats = load_training_stats(n) if resume else {
         'iterations': [],
-        'win_rates': [],
+        'o_win_rates': [],
+        'x_win_rates': [],
         'avg_losses': [],
         'policy_losses': [],
         'value_losses': [],
@@ -308,10 +319,11 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         
         # Evaluation against random player
         print("\nEvaluating against random player...")
-        win_rate = evaluate_agent(agent, num_games=eval_games, n=n)
+        o_win_rate, x_win_rate = evaluate_agent(agent, num_games=eval_games, n=n)
         
         print(f"Results vs Random:")
-        print(f"  Win Rate:  {win_rate*100:.1f}%")
+        print(f"  O Win Rate:  {o_win_rate*100:.1f}%")
+        print(f"  X Win Rate:  {x_win_rate*100:.1f}%")
 
         if debug:
             print("\nMCTS diagnostics (start state):")
@@ -355,7 +367,8 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
         
         # Save statistics
         stats['iterations'].append(iteration)
-        stats['win_rates'].append(win_rate)
+        stats['o_win_rates'].append(o_win_rate)
+        stats['x_win_rates'].append(x_win_rate)
         stats['avg_losses'].append(avg_loss)
         stats['policy_losses'].append(policy_loss)
         stats['value_losses'].append(value_loss)
@@ -373,18 +386,6 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
     # Final summary
     print("\n" + "=" * 60)
     print("Training Complete - Summary")
-    print("=" * 60)
-    
-    if len(stats['win_rates']) >= 2:
-        initial_wr = stats['win_rates'][0] * 100
-        final_wr = stats['win_rates'][-1] * 100
-        improvement = final_wr - initial_wr
-        
-        print(f"Initial win rate vs random: {initial_wr:.1f}%")
-        print(f"Final win rate vs random:   {final_wr:.1f}%")
-        print(f"Improvement:                {improvement:+.1f}%")
-    
-    print(f"\nStatistics saved to: stats/training_stats_n{n}.json")
     print("=" * 60)
 
 

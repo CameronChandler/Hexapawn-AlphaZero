@@ -266,7 +266,15 @@ class AlphaZeroAgent:
         }
 
     def search(self, root_state, add_root_noise=False):
-        """Run MCTS guided by neural network"""
+        """
+        Run MCTS guided by neural network
+        
+        Proper MCTS flow:
+        1. Selection: traverse tree using PUCT
+        2. Expansion: expand leaf node
+        3. Evaluation: get value
+        4. Backpropagation: update path
+        """
         root = MCTSNode(root_state.copy())
         
         for _ in range(self.simulations):
@@ -274,62 +282,50 @@ class AlphaZeroAgent:
             state = root_state.copy()
             search_path = [node]
             
-            # Selection
+            # STEP 1: SELECTION
+            # Traverse down the tree until we hit a leaf (unexpanded node or terminal)
             while node.children and not node.is_terminal():
                 node = node.best_child(self.c_puct)
                 state.make_move(node.move)
                 search_path.append(node)
             
-            # Expansion + Evaluation
+            # Now 'node' is a leaf: either terminal, or not yet expanded
+            
+            # STEP 2: EXPANSION & EVALUATION
             if state.is_terminal():
+                # Terminal state - compute exact value
                 winner = state.get_winner()
-                # Value from current player to move at this state.
-                # If terminal, the current player cannot move and has lost.
-                value = -1 if winner != state.player else 1
-                print(value)
+                # The player who just moved is opposite of current player
+                last_mover = O if state.player == X else X
+                value = 1.0 if winner == last_mover else -1.0
             else:
+                # Non-terminal leaf - evaluate with network and expand
                 with torch.no_grad():
-                    policy_logits, _ = self.net(state.to_tensor(canonical=True))
-
+                    policy_logits, value_tensor = self.net(state.to_tensor(canonical=True))
+                
+                # Get move priors
                 move_priors = self._policy_logits_to_priors(state, policy_logits)
+                
+                # Add Dirichlet noise to root
                 if node is root and add_root_noise:
                     move_priors = self._add_dirichlet_noise(move_priors)
-
-                if node is root and node.untried_moves:
-                    # Fully expand root once so policy targets are not degenerate.
-                    for move in node.untried_moves[:]:
-                        prior = move_priors.get(move, 1.0 / len(node.untried_moves))
-                        node.expand(move, prior)
-                    node = node.best_child(self.c_puct)
-                    state.make_move(node.move)
-                    search_path.append(node)
-                elif node.untried_moves:
-                    untried = node.untried_moves[:]
-                    priors = np.array([move_priors.get(m, 0.0) for m in untried], dtype=np.float32)
-                    if priors.sum() <= 0:
-                        priors = np.ones(len(untried), dtype=np.float32)
-                    priors = priors / priors.sum()
-                    move = untried[np.random.choice(len(untried), p=priors)]
-                    node = node.expand(move, move_priors.get(move, 1.0 / len(untried)))
-                    state.make_move(node.move)
-                    search_path.append(node)
-
-                if state.is_terminal():
-                    winner = state.get_winner()
-                    # Value from current player to move at this state.
-                    value = -1 if winner != state.player else 1
-                else:
-                    with torch.no_grad():
-                        _, value_tensor = self.net(state.to_tensor(canonical=True))
-                    value = value_tensor.item()
+                
+                # Expand all children of this leaf
+                for move in node.untried_moves[:]:
+                    prior = move_priors.get(move, 1.0 / len(node.untried_moves) if node.untried_moves else 0)
+                    node.expand(move, prior)
+                
+                # Get value from network
+                value = value_tensor.item()
             
-            # Backpropagation (value is from leaf player's perspective)
+            # STEP 3: BACKPROPAGATION
+            # Value is from the perspective of the player at the leaf
             leaf_player = state.player
-            for node in reversed(search_path):
-                if node.state.player == leaf_player:
-                    node.update(value)
+            for backup_node in reversed(search_path):
+                if backup_node.state.player == leaf_player:
+                    backup_node.update(value)
                 else:
-                    node.update(-value)
+                    backup_node.update(-value)
         
         return root
     

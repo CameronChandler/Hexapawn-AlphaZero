@@ -21,7 +21,8 @@ def plot_training_stats(n=3):
         stats = json.load(f)
     
     iterations = stats['iterations']
-    win_rates = [wr * 100 for wr in stats['win_rates']]
+    o_win_rates = [wr * 100 for wr in stats['o_win_rates']]
+    x_win_rates = [wr * 100 for wr in stats['x_win_rates']]
     avg_losses = stats['avg_losses']
     
     # Create figure with subplots
@@ -29,7 +30,8 @@ def plot_training_stats(n=3):
     fig.suptitle(f'AlphaZero Hexapawn Training Progress ({n}x{n} Board)', fontsize=14, fontweight='bold')
     
     # Plot 1: Performance vs Random Player
-    ax1.plot(iterations, win_rates,  'g-o', label='Win Rate',  linewidth=2, markersize=6)
+    ax1.plot(iterations, o_win_rates, 'g-o', label='O Win Rate', linewidth=2, markersize=6)
+    ax1.plot(iterations, x_win_rates, 'r-s', label='X Win Rate', linewidth=2, markersize=6)
     ax1.set_xlabel('Iteration', fontsize=11)
     ax1.set_ylabel('Rate (%)', fontsize=11)
     ax1.set_title('Performance vs Random Player', fontsize=12)
@@ -77,38 +79,20 @@ def print_summary(n=3):
         print(f"\nTotal iterations: {stats['iterations'][-1]}")
         print(f"Training started: {stats.get('timestamp', 'Unknown')}")
         
-        print("\n--- Performance vs Random Player ---")
-        print(f"Initial: Win={stats['win_rates'][0]*100:.1f}%")
-        print(f"Final:   Win={stats['win_rates'][-1]*100:.1f}%")
-        
-        improvement = (stats['win_rates'][-1] - stats['win_rates'][0]) * 100
-        print(f"\nWin rate improvement: {improvement:+.1f}%")
-        
         print("\n--- Training Loss ---")
         print(f"Initial loss: {stats['avg_losses'][0]:.4f}")
         print(f"Final loss:   {stats['avg_losses'][-1]:.4f}")
         print(f"Best loss:    {min(stats['avg_losses']):.4f}")
-        
-        # Find iteration with best performance
-        best_iter = stats['iterations'][stats['win_rates'].index(max(stats['win_rates']))]
-        print(f"\nBest win rate achieved at iteration: {best_iter}")
-    
+            
     print("=" * 60 + "\n")
 
 
-if __name__ == "__main__":
-    import numpy as np  # Import here for trend line
-    
+if __name__ == "__main__":   
     parser = argparse.ArgumentParser(description='Plot AlphaZero training statistics')
     parser.add_argument('--n', type=int, default=3,
                         help='Board size (default: 3)')
-    parser.add_argument('--summary-only', action='store_true',
-                        help='Print summary without plotting')
     
     args = parser.parse_args()
     
-    if args.summary_only:
-        print_summary(args.n)
-    else:
-        print_summary(args.n)
-        plot_training_stats(args.n)
+    print_summary(args.n)
+    plot_training_stats(args.n)
