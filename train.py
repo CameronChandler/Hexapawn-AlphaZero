@@ -177,7 +177,7 @@ def train_network(net, examples, epochs=10, batch_size=32, n=3):
         for i in range(0, len(examples), batch_size):
             batch = examples[i:i + batch_size]
             
-            states = torch.cat([s.to_tensor() for s, _, _ in batch])
+            states = torch.cat([s.to_tensor(canonical=True) for s, _, _ in batch])
             policy_targets = []
             value_targets = []
             
@@ -185,11 +185,9 @@ def train_network(net, examples, epochs=10, batch_size=32, n=3):
                 # Convert policy dict to tensor
                 policy_tensor = torch.zeros(n * n * 3)
                 for move, prob in policy.items():
-                    r, c, nr, nc = move
-                    dc = nc - c
-                    if dc < -1 or dc > 1:
+                    idx = state.move_to_policy_index(move, canonical=True)
+                    if idx is None:
                         continue
-                    idx = (r * n + c) * 3 + (dc + 1)
                     policy_tensor[idx] = float(prob)
                 if torch.isnan(policy_tensor).any():
                     print("Warning: NaN in policy target tensor.")
@@ -331,7 +329,7 @@ def train_alphazero(iterations=10, games_per_iteration=50, simulations=100, n=3,
                 print("  Warning: no root children found (no legal moves?)")
 
             with torch.no_grad():
-                _, value_tensor = agent.net(start_state.to_tensor())
+                _, value_tensor = agent.net(start_state.to_tensor(canonical=True))
             print(f"  Net value(start): {value_tensor.item():+.3f}")
             if start_values:
                 avg_start_value = sum(start_values) / len(start_values)

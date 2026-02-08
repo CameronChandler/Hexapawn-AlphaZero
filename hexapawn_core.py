@@ -75,12 +75,42 @@ class HexapawnState:
         new_state.player = self.player
         return new_state
 
-    def to_tensor(self):
-        """Convert board to neural network input (3 channels: X, O, current player)"""
+    def canonical_board(self):
+        """
+        Return board oriented to the current player's perspective.
+        The current player is always represented as O to move.
+        """
+        if self.player == O:
+            return self.board
+        # Flip 180 degrees and swap X/O so the current player becomes O.
+        return -np.flipud(np.fliplr(self.board))
+
+    def canonical_move(self, move):
+        """Map a move into the canonical orientation (current player as O)."""
+        if self.player == O:
+            return move
+        r, c, nr, nc = move
+        n = self.n - 1
+        return (n - r, n - c, n - nr, n - nc)
+
+    def move_to_policy_index(self, move, canonical=True):
+        """Map a move to the policy output index."""
+        if canonical:
+            move = self.canonical_move(move)
+        r, c, nr, nc = move
+        dc = nc - c
+        if dc < -1 or dc > 1:
+            return None
+        return (r * self.n + c) * 3 + (dc + 1)
+
+    def to_tensor(self, canonical=True):
+        """Convert board to neural network input (3 channels: X, O, current player)."""
+        board = self.canonical_board() if canonical else self.board
+        player = O if (canonical and self.player == X) else self.player
         channels = np.zeros((3, self.n, self.n), dtype=np.float32)
-        channels[0] = (self.board == X).astype(np.float32)
-        channels[1] = (self.board == O).astype(np.float32)
-        channels[2] = np.full((self.n, self.n), 1.0 if self.player == O else 0.0)
+        channels[0] = (board == X).astype(np.float32)
+        channels[1] = (board == O).astype(np.float32)
+        channels[2] = np.full((self.n, self.n), 1.0 if player == O else 0.0)
         return torch.FloatTensor(channels).unsqueeze(0)
 
     def display_board(self):
@@ -191,7 +221,7 @@ class AlphaZeroAgent:
     def get_move_priors(self, state):
         """Get policy (move probabilities) from neural network"""
         with torch.no_grad():
-            policy_logits, _ = self.net(state.to_tensor())
+            policy_logits, _ = self.net(state.to_tensor(canonical=True))
         return self._policy_logits_to_priors(state, policy_logits)
 
     def _policy_logits_to_priors(self, state, policy_logits):
@@ -206,11 +236,9 @@ class AlphaZeroAgent:
         moves = state.get_possible_moves()
         move_probs = {}
         for move in moves:
-            r, c, nr, nc = move
-            dc = nc - c
-            if dc < -1 or dc > 1:
+            idx = state.move_to_policy_index(move, canonical=True)
+            if idx is None:
                 continue
-            idx = (r * state.n + c) * 3 + (dc + 1)
             move_probs[move] = policy[idx]
 
         total = sum(move_probs.values())
@@ -255,7 +283,7 @@ class AlphaZeroAgent:
                 value = 1 if winner == state.player else -1
             else:
                 with torch.no_grad():
-                    policy_logits, _ = self.net(state.to_tensor())
+                    policy_logits, _ = self.net(state.to_tensor(canonical=True))
 
                 move_priors = self._policy_logits_to_priors(state, policy_logits)
                 if node is root and add_root_noise:
@@ -285,7 +313,7 @@ class AlphaZeroAgent:
                     value = 1 if winner == state.player else -1
                 else:
                     with torch.no_grad():
-                        _, value_tensor = self.net(state.to_tensor())
+                        _, value_tensor = self.net(state.to_tensor(canonical=True))
                     value = value_tensor.item()
             
             # Backpropagation (value is from leaf player's perspective)

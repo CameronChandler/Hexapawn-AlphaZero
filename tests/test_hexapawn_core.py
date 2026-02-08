@@ -49,6 +49,55 @@ class TestHexapawnState(unittest.TestCase):
         self.assertTrue(state.is_terminal())
         self.assertEqual(state.get_winner(), core.X)
 
+    def test_canonical_board_flips_for_x(self):
+        state = core.HexapawnState(3)
+        state.board = np.array(
+            [
+                [core.X, core.BLANK, core.O],
+                [core.BLANK, core.O, core.BLANK],
+                [core.O, core.BLANK, core.X],
+            ],
+            dtype=np.int8,
+        )
+        state.player = core.X
+        expected = -np.flipud(np.fliplr(state.board))
+        self.assertTrue(np.array_equal(state.canonical_board(), expected))
+
+    def test_to_tensor_canonical_marks_current_player_as_o(self):
+        state = core.HexapawnState(3)
+        state.board = np.array(
+            [
+                [core.X, core.BLANK, core.O],
+                [core.BLANK, core.O, core.BLANK],
+                [core.O, core.BLANK, core.X],
+            ],
+            dtype=np.int8,
+        )
+        state.player = core.X
+        tensor = state.to_tensor(canonical=True).squeeze(0).numpy()
+        self.assertTrue(np.all(tensor[2] == 1.0))
+        expected_board = -np.flipud(np.fliplr(state.board))
+        self.assertTrue(np.array_equal(tensor[0], (expected_board == core.X).astype(np.float32)))
+        self.assertTrue(np.array_equal(tensor[1], (expected_board == core.O).astype(np.float32)))
+
+    def test_move_to_policy_index_uses_canonical_orientation(self):
+        state = core.HexapawnState(3)
+        state.board = np.array(
+            [
+                [core.BLANK, core.BLANK, core.BLANK],
+                [core.BLANK, core.X, core.BLANK],
+                [core.BLANK, core.BLANK, core.BLANK],
+            ],
+            dtype=np.int8,
+        )
+        state.player = core.X
+        move = (1, 1, 2, 1)  # X moves down; canonical should map to O moving up.
+        canonical_move = state.canonical_move(move)
+        r, c, nr, nc = canonical_move
+        dc = nc - c
+        expected_idx = (r * state.n + c) * 3 + (dc + 1)
+        self.assertEqual(state.move_to_policy_index(move, canonical=True), expected_idx)
+
 
 class TestMCTS(unittest.TestCase):
     def setUp(self):
