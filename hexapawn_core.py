@@ -265,7 +265,7 @@ class AlphaZeroAgent:
             for i, move in enumerate(moves)
         }
 
-    def search(self, root_state, add_root_noise=False):
+    def search(self, root_state: HexapawnState, add_root_noise:bool=False) -> MCTSNode:
         """
         Run MCTS guided by neural network
         
@@ -276,6 +276,9 @@ class AlphaZeroAgent:
         4. Backpropagation: update path
         """
         root = MCTSNode(root_state.copy())
+
+        # if root_state.is_terminal():
+        #     return root
         
         for _ in range(self.simulations):
             node = root

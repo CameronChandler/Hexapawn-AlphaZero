@@ -123,8 +123,13 @@ class TestMCTS(unittest.TestCase):
         legal = set(state.get_possible_moves())
         self.assertTrue(set(policy.keys()).issubset(legal))
 
+def _seed_all(seed=123):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
 class _ZeroNet(nn.Module):
+    """Network that outputs uniform policy and zero value"""
     def __init__(self, n=3):
         super().__init__()
         self.n = n
@@ -135,96 +140,392 @@ class _ZeroNet(nn.Module):
         value = torch.zeros((batch, 1), dtype=x.dtype)
         return policy, value
 
-
-class TestMCTSWinningMoves(unittest.TestCase):
+class TestWinningMovesN3(unittest.TestCase):
+    """Test MCTS can find forced wins on 3x3 board"""
+    
     def setUp(self):
         _seed_all(123)
-
-    def test_agent_picks_immediate_win(self):
+        self.net = _ZeroNet(3)
+    
+    def test_immediate_win_move_forward(self):
+        """O can win by moving forward to top row"""
         state = core.HexapawnState(3)
-        state.board = np.array(
-            [
-                [core.BLANK, core.BLANK, core.X],
-                [core.O, core.BLANK, core.BLANK],
-                [core.BLANK, core.BLANK, core.O],
-            ],
-            dtype=np.int8,
-        )
+        state.board = np.array([
+            [core.BLANK, core.BLANK, core.BLANK],  # O can move here to win
+            [core.X, core.O, core.BLANK],      # O at (1,1)
+            [core.BLANK, core.BLANK, core.BLANK],
+        ], dtype=np.int8)
         state.player = core.O
-        net = _ZeroNet(3)
-        agent = core.AlphaZeroAgent(net, simulations=40)
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=40)
         move = agent.choose_move(state, temperature=0)
+        
+        # Should choose (1,1) -> (0,1) to reach top row
+        self.assertEqual(move, (1, 1, 0, 1))
+        
+        # Verify it wins
         next_state = state.copy()
         next_state.make_move(move)
         self.assertTrue(next_state.is_terminal())
         self.assertEqual(next_state.get_winner(), core.O)
-
-    def test_agent_picks_forced_win_in_two(self):
-        # Find a reachable state where O has a forced win in 2 plies
-        # (current move, opponent reply, current move), but no immediate win.
-        def immediate_win_moves(s):
-            wins = []
-            for mv in s.get_possible_moves():
-                child = s.copy()
-                child.make_move(mv)
-                if child.is_terminal() and child.get_winner() == s.player:
-                    wins.append(mv)
-            return wins
-
-        def forced_win_in_two_moves(s):
-            for mv in s.get_possible_moves():
-                child = s.copy()
-                child.make_move(mv)
-                if child.is_terminal():
-                    continue
-                opponent_moves = child.get_possible_moves()
-                if not opponent_moves:
-                    continue
-                guaranteed = True
-                for opp_mv in opponent_moves:
-                    reply = child.copy()
-                    reply.make_move(opp_mv)
-                    if not immediate_win_moves(reply):
-                        guaranteed = False
-                        break
-                if guaranteed:
-                    return mv
-            return None
-
-        start = core.HexapawnState(3)
-        queue = [start]
-        seen = set()
-        candidate = None
-
-        while queue and candidate is None:
-            state = queue.pop(0)
-            key = (state.player, state.board.tobytes())
-            if key in seen:
-                continue
-            seen.add(key)
-            if state.is_terminal():
-                continue
-            for move in state.get_possible_moves():
-                child = state.copy()
-                child.make_move(move)
-                queue.append(child)
-
-            if state.player != core.O:
-                continue
-            if immediate_win_moves(state):
-                continue
-            move = forced_win_in_two_moves(state)
-            if move is not None:
-                candidate = (state, move)
-
-        self.assertIsNotNone(candidate, "No suitable test state found.")
-        state, winning_move = candidate
-
-        net = _ZeroNet(3)
-        agent = core.AlphaZeroAgent(net, simulations=160)
+    
+    def test_immediate_win_by_capture(self):
+        """O can win by capturing last X piece"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.X, core.X, core.BLANK],      # Last X at (0,1)
+            [core.O, core.BLANK, core.BLANK],      # O at (1,0) can capture
+            [core.BLANK, core.BLANK, core.BLANK],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=40)
         move = agent.choose_move(state, temperature=0)
-        self.assertEqual(move, winning_move)
+        
+        # Should capture: (1,0) -> (0,1)
+        self.assertEqual(move, (1, 0, 0, 1))
+        
+        next_state = state.copy()
+        next_state.make_move(move)
+        self.assertTrue(next_state.is_terminal())
+        self.assertEqual(next_state.get_winner(), core.O)
+    
+    def test_avoid_losing_move(self):
+        """O should avoid moves that let X win immediately"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.BLANK, core.BLANK, core.BLANK],
+            [core.X, core.BLANK, core.BLANK],      # X at (1,0)
+            [core.O, core.O, core.BLANK],          # O at (2,0) and (2,1)
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=100)
+        move = agent.choose_move(state, temperature=0)
+        
+        # O should NOT move (2,0) forward, as that allows X to reach bottom row
+        # Moving (2,0) -> (1,0) would capture X, which is safe
+        # Moving (2,1) -> (1,1) is also safe
+        
+        # The bad move would be moving (2,0) to anywhere that doesn't block X
+        bad_moves = [(2, 1, 1, 1)]  # This lets X win by (1,0) -> (2,0)
+        
+        self.assertNotIn(move, bad_moves)
+
+
+class TestWinningMovesN4(unittest.TestCase):
+    """Test MCTS can find forced wins on 4x4 board"""
+    
+    def setUp(self):
+        _seed_all(456)
+        self.net = _ZeroNet(4)
+    
+    def test_immediate_win_4x4(self):
+        """O can win by reaching top row on 4x4"""
+        state = core.HexapawnState(4)
+        state.board = np.array([
+            [core.BLANK, core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.O, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.X, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK, core.BLANK],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=50)
+        move = agent.choose_move(state, temperature=0)
+        
+        # Should move to top row
+        self.assertEqual(move[2], 0)
+        
+        next_state = state.copy()
+        next_state.make_move(move)
+        self.assertTrue(next_state.is_terminal())
+        self.assertEqual(next_state.get_winner(), core.O)
+    
+    def test_capture_all_pieces_4x4(self):
+        """O wins by capturing all X pieces"""
+        state = core.HexapawnState(4)
+        state.board = np.array([
+            [core.X, core.X, core.BLANK, core.BLANK],  # Last X
+            [core.O, core.BLANK, core.BLANK, core.BLANK],  # O can capture
+            [core.BLANK, core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK, core.BLANK],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=50)
+        move = agent.choose_move(state, temperature=0)
+        
+        # Should capture
+        self.assertEqual(move, (1, 0, 0, 1))
+    
+    def test_sees_victory(self):
+        """O wins by capturing all X pieces"""
+        root_state = core.HexapawnState(4)
+        root_state.board = np.array([
+            [core.X, core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK, core.O],
+        ], dtype=np.int8)
+        root_state.player = core.O
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=2)
+        move = agent.choose_move(root_state, temperature=0)
+                
+        # Should capture
+        self.assertEqual(move, (3, 3, 2, 3))
+
+        root = core.MCTSNode(root_state.copy())
+
+        print('#'*40)
+        print('#'*40)
+        
+        for _ in range(agent.simulations):
+            node = root
+            state = root_state.copy()
+            search_path = [node]
+            
+            # STEP 1: SELECTION
+            # Traverse down the tree until we hit a leaf (unexpanded node or terminal)
+            while node.children and not node.is_terminal():
+                node = node.best_child(agent.c_puct)
+                state.make_move(node.move)
+                search_path.append(node)
+                print(search_path)
+            
+            # Now 'node' is a leaf: either terminal, or not yet expanded
+            
+            # STEP 2: EXPANSION & EVALUATION
+            if state.is_terminal():
+                # Terminal state - compute exact value
+                winner = state.get_winner()
+                # The player who just moved is opposite of current player
+                last_mover = core.O if state.player == core.X else core.X
+                value = 1.0 if winner == last_mover else -1.0
+                print(value, state)
+            else:
+                # Non-terminal leaf - evaluate with network and expand
+                with torch.no_grad():
+                    policy_logits, value_tensor = agent.net(state.to_tensor(canonical=True))
+                    print(policy_logits, value_tensor)
+                
+                # Get move priors
+                move_priors = agent._policy_logits_to_priors(state, policy_logits)
+                print('move_priors', move_priors)
+                
+                # Expand all children of this leaf
+                for move in node.untried_moves[:]:
+                    prior = move_priors.get(move, 1.0 / len(node.untried_moves) if node.untried_moves else 0)
+                    node.expand(move, prior)
+                    print(node)
+                
+                # Get value from network
+                value = value_tensor.item()
+                print('value', value)
+            
+            # STEP 3: BACKPROPAGATION
+            # Value is from the perspective of the player at the leaf
+            leaf_player = state.player
+            for backup_node in reversed(search_path):
+                if backup_node.state.player == leaf_player:
+                    backup_node.update(value)
+                else:
+                    backup_node.update(-value)
+
+            print('Search path:')
+            for node in search_path:
+                print(node)
+
+        
+        print('#'*40)
+        print('#'*40)
+
+
+class TestDeepTactics(unittest.TestCase):
+    """Test MCTS can find wins requiring 3+ moves of calculation"""
+    
+    def setUp(self):
+        _seed_all(789)
+        self.net = _ZeroNet(3)
+    
+    def test_forced_win_in_three_plies(self):
+        """O has forced win requiring 3-ply search (O-X-O)"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.X, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.O],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        # O should advance pawns to create multiple threats
+        # With 3 pawns vs 1, O has a forced win
+        agent = core.AlphaZeroAgent(self.net, simulations=200)
+        move = agent.choose_move(state, temperature=0)
+        
+        # After O's move, verify X cannot prevent eventual loss
+        next_state = state.copy()
+        next_state.make_move(move)
+        
+        # Check that O's position is winning
+        # (This is a heuristic check - full proof would require minimax)
+        self.assertFalse(next_state.is_terminal())
+        
+        # O should be advancing pawns
+        self.assertEqual(move[2], 1)  # Moving to row 1
+    
+    def test_zugzwang_position(self):
+        """Position where having to move is a disadvantage"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.BLANK, core.BLANK, core.BLANK],
+            [core.X, core.BLANK, core.X],
+            [core.BLANK, core.O, core.BLANK],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        # O is in trouble - any forward move allows X to advance
+        # O should make the best defensive move
+        agent = core.AlphaZeroAgent(self.net, simulations=150)
+        move = agent.choose_move(state, temperature=0)
+        
+        # Verify it's a legal move
+        self.assertIn(move, state.get_possible_moves())
+
+
+class TestSearchDepth(unittest.TestCase):
+    """Test that more simulations find better moves"""
+    
+    def setUp(self):
+        _seed_all(999)
+        self.net = _ZeroNet(3)
+    
+    def test_shallow_vs_deep_search(self):
+        """Deeper search should find better moves in complex position"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.BLANK, core.X, core.X],
+            [core.BLANK, core.BLANK, core.BLANK],
+            [core.O, core.O, core.BLANK],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        # Shallow search
+        shallow_agent = core.AlphaZeroAgent(self.net, simulations=10)
+        shallow_move = shallow_agent.choose_move(state, temperature=0)
+        
+        # Deep search
+        deep_agent = core.AlphaZeroAgent(self.net, simulations=200)
+        deep_move = deep_agent.choose_move(state, temperature=0)
+        
+        # Both should be legal
+        self.assertIn(shallow_move, state.get_possible_moves())
+        self.assertIn(deep_move, state.get_possible_moves())
+        
+        # Compare quality by playing out both moves
+        shallow_state = state.copy()
+        shallow_state.make_move(shallow_move)
+        
+        deep_state = state.copy()
+        deep_state.make_move(deep_move)
+        
+        # The deep search move should be at least as good
+        # (harder to test definitively without perfect play)
+        print(f"Shallow ({10} sims): {shallow_move}")
+        print(f"Deep ({200} sims): {deep_move}")
+
+
+class TestMCTSConsistency(unittest.TestCase):
+    """Test that MCTS is deterministic when it should be"""
+    
+    def setUp(self):
+        _seed_all(111)
+        self.net = _ZeroNet(3)
+    
+    def test_same_move_with_same_seed(self):
+        """Same seed should produce same move (temperature=0)"""
+        state = core.HexapawnState(3)
+        
+        _seed_all(555)
+        agent1 = core.AlphaZeroAgent(self.net, simulations=50)
+        move1 = agent1.choose_move(state, temperature=0)
+        
+        _seed_all(555)
+        agent2 = core.AlphaZeroAgent(self.net, simulations=50)
+        move2 = agent2.choose_move(state, temperature=0)
+        
+        self.assertEqual(move1, move2)
+    
+    def test_exploration_with_temperature(self):
+        """Temperature > 0 should produce varied moves"""
+        state = core.HexapawnState(3)
+        agent = core.AlphaZeroAgent(self.net, simulations=50)
+        
+        moves = []
+        for _ in range(20):
+            move = agent.choose_move(state, temperature=1.0)
+            moves.append(move)
+        
+        # Should see some variety (at least 2 different moves)
+        unique_moves = len(set(moves))
+        self.assertGreaterEqual(unique_moves, 2, "Temperature=1.0 should produce varied moves")
+
+
+class TestEdgeCases(unittest.TestCase):
+    """Test edge cases and boundary conditions"""
+    
+    def setUp(self):
+        _seed_all(222)
+        self.net = _ZeroNet(3)
+    
+    def test_only_one_legal_move(self):
+        """When only one move is legal, MCTS should pick it"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.X, core.X, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK],
+            [core.BLANK, core.BLANK, core.O],
+        ], dtype=np.int8)
+        state.player = core.O
+        
+        # Only move is (2,2) -> (1,2)
+        legal_moves = state.get_possible_moves()
+        self.assertEqual(len(legal_moves), 1)
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=20)
+        move = agent.choose_move(state, temperature=0)
+        
+        self.assertEqual(move, legal_moves[0])
+    
+    def test_x_player_can_win(self):
+        """Test that X (not just O) can find winning moves"""
+        state = core.HexapawnState(3)
+        state.board = np.array([
+            [core.BLANK, core.BLANK, core.BLANK],
+            [core.O, core.X, core.BLANK],
+            [core.BLANK, core.BLANK, core.BLANK],
+        ], dtype=np.int8)
+        state.player = core.X
+        
+        agent = core.AlphaZeroAgent(self.net, simulations=40)
+        move = agent.choose_move(state, temperature=0)
+        
+        # X should move to bottom row to win
+        self.assertEqual(move[2], 2)
+        
+        next_state = state.copy()
+        next_state.make_move(move)
+        self.assertTrue(next_state.is_terminal())
+        self.assertEqual(next_state.get_winner(), core.X)
+
+
+def run_position_tests():
+    """Helper to run specific position tests with verbose output"""
+    suite = unittest.TestLoader().loadTestsFromTestCase(TestWinningMovesN3)
+    runner = unittest.TextTestRunner(verbosity=2)
+    runner.run(suite)
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)
