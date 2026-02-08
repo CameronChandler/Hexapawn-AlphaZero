@@ -118,6 +118,13 @@ class HexapawnState:
         for r in range(self.n):
             print(f"{r} {' '.join('X' if cell == X else 'O' if cell == O else '.' for cell in self.board[r])}")
 
+    def __repr__(self):
+        rows = []
+        for r in range(self.n):
+            row = ''.join('X' if cell == X else 'O' if cell == O else '.' for cell in self.board[r])
+            rows.append(row)
+        return '\n'.join(rows) + f"\nPlayer to move: {'O' if self.player == O else 'X'}"
+
 
 class HexapawnNet(nn.Module):
     """Neural network that outputs policy (move probabilities) and value (position evaluation)"""
@@ -209,6 +216,9 @@ class MCTSNode:
         self.visits += 1
         self.value_sum += value
 
+    def __repr__(self):
+        return f"MCTSNode(move={self.move}, visits={self.visits}, value={self.get_value():.3f})\n{self.state.__repr__()}"
+
 
 class AlphaZeroAgent:
     def __init__(self, net, simulations=100, c_puct=1.0, dirichlet_alpha=0.3, dirichlet_epsilon=0.25):
@@ -226,12 +236,6 @@ class AlphaZeroAgent:
 
     def _policy_logits_to_priors(self, state, policy_logits):
         policy = torch.softmax(policy_logits, dim=1).squeeze().numpy()
-        if not np.isfinite(policy).all():
-            print("Warning: non-finite policy logits detected; falling back to uniform priors.")
-            moves = state.get_possible_moves()
-            if not moves:
-                return {}
-            return {m: 1.0 / len(moves) for m in moves}
 
         moves = state.get_possible_moves()
         move_probs = {}
@@ -280,7 +284,9 @@ class AlphaZeroAgent:
             if state.is_terminal():
                 winner = state.get_winner()
                 # Value from current player to move at this state.
-                value = 1 if winner == state.player else -1
+                # If terminal, the current player cannot move and has lost.
+                value = -1 if winner != state.player else 1
+                print(value)
             else:
                 with torch.no_grad():
                     policy_logits, _ = self.net(state.to_tensor(canonical=True))
@@ -310,7 +316,8 @@ class AlphaZeroAgent:
 
                 if state.is_terminal():
                     winner = state.get_winner()
-                    value = 1 if winner == state.player else -1
+                    # Value from current player to move at this state.
+                    value = -1 if winner != state.player else 1
                 else:
                     with torch.no_grad():
                         _, value_tensor = self.net(state.to_tensor(canonical=True))
